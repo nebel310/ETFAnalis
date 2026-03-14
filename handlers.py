@@ -17,6 +17,7 @@ from utils import format_percent, format_price, get_info_query, get_top_metrics_
 router = Router()
 SEND_RETRIES = 3
 SEND_RETRY_DELAY_SECONDS = 1.0
+NO_DATA_TEXT = "нет данных"
 
 
 
@@ -38,12 +39,12 @@ async def safe_answer(message: Message, text: str) -> bool:
 async def handle_start(message: Message) -> None:
     """Send welcome message and available command list."""
     text = (
-        "Welcome to ETF Helper Bot.\n"
-        "Available commands:\n"
-        "/start - Show this message\n"
-        "/top [N] - Show top ETFs by score\n"
-        "/info SECID - Show detailed ETF info\n"
-        "/update - Refresh ETF data from MOEX"
+        "Добро пожаловать в ETF помощника.\n"
+        "Доступные команды:\n"
+        "/start - Показать это сообщение\n"
+        "/top [N] - Показать топ фондов по скору\n"
+        "/info SECID - Показать подробную информацию по фонду\n"
+        "/update - Обновить данные фондов с MOEX"
     )
     await safe_answer(message, text)
 
@@ -58,7 +59,7 @@ async def handle_top(message: Message, command: CommandObject) -> None:
             if parsed_limit > 0:
                 limit = min(parsed_limit, 50)
         except ValueError:
-            await safe_answer(message, "N must be a positive integer. Example: /top 10")
+            await safe_answer(message, "N должен быть положительным числом. Пример: /top 10")
             return
 
     try:
@@ -68,30 +69,30 @@ async def handle_top(message: Message, command: CommandObject) -> None:
             rows = result.all()
 
         if not rows:
-            await safe_answer(message, "No cached ETF data found. Run /update first.")
+            await safe_answer(message, "Данные в кэше не найдены. Сначала выполните /update.")
             return
 
-        lines = [f"Top {limit} ETFs by score:"]
+        lines = [f"Топ {limit} фондов:", ""]
         for index, (metric, etf) in enumerate(rows, start=1):
-            line = (
-                f"{index}. {metric.secid} | {etf.shortname or 'N/A'} | "
-                f"Score: {metric.score:.2f} | "
-                f"1Y: {format_percent(metric.return_1y)} | "
-                f"5Y: {format_percent(metric.return_5y)} | "
-                f"DivYield: {format_percent(metric.div_yield)}"
-            )
-            lines.append(line)
+            lines.append(f"{index}. {metric.secid}")
+            lines.append(f"- Название: {etf.shortname or NO_DATA_TEXT}")
+            lines.append(f"- Доходность за 1 год: {format_percent(metric.return_1y)}")
+            lines.append(f"- Доходность за 5 лет: {format_percent(metric.return_5y)}")
+            lines.append(f"- Дивиденды: {format_percent(metric.div_yield)}")
+            lines.append(f"- Скор: {metric.score:.2f}")
+            lines.append("")
 
-        await safe_answer(message, "\n".join(lines))
+        text = "\n".join(lines).rstrip()
+        await safe_answer(message, text)
     except SQLAlchemyError:
-        await safe_answer(message, "Database error occurred while loading top ETFs. Please try again later.")
+        await safe_answer(message, "Ошибка базы данных при загрузке топа фондов. Попробуйте позже.")
 
 
 
 async def handle_info(message: Message, command: CommandObject) -> None:
     """Show detailed cached information for an ETF by SECID."""
     if not command.args:
-        await safe_answer(message, "Please provide SECID. Example: /info FXUS")
+        await safe_answer(message, "Укажите SECID. Пример: /info FXUS")
         return
 
     secid = command.args.strip().upper()
@@ -105,7 +106,7 @@ async def handle_info(message: Message, command: CommandObject) -> None:
             row = result.first()
 
         if row is None:
-            await safe_answer(message, "ETF not found in cache. Run /update first or check SECID.")
+            await safe_answer(message, "Фонд не найден в кэше. Выполните /update или проверьте SECID.")
             return
 
         metric, etf = row
@@ -113,21 +114,21 @@ async def handle_info(message: Message, command: CommandObject) -> None:
 
         text = (
             f"SECID: {metric.secid}\n"
-            f"Name: {etf.shortname or 'N/A'}\n"
-            f"ISIN: {etf.isin or 'N/A'}\n"
-            f"Currency: {etf.currency or 'N/A'}\n"
-            f"Lot size: {etf.lotsize if etf.lotsize is not None else 'N/A'}\n"
-            f"Current price: {format_price(metric.price)}\n"
-            f"Price date: {metric.price_date.isoformat()}\n"
-            f"Return 1Y: {format_percent(metric.return_1y)}\n"
-            f"Return 5Y: {format_percent(metric.return_5y)}\n"
-            f"Dividend yield: {format_percent(metric.div_yield)}\n"
-            f"Score: {metric.score:.2f}\n"
-            f"MOEX page: {issue_link}"
+            f"Название: {etf.shortname or NO_DATA_TEXT}\n"
+            f"ISIN: {etf.isin or NO_DATA_TEXT}\n"
+            f"Валюта: {etf.currency or NO_DATA_TEXT}\n"
+            f"Размер лота: {etf.lotsize if etf.lotsize is not None else NO_DATA_TEXT}\n"
+            f"Текущая цена: {format_price(metric.price)}\n"
+            f"Дата цены: {metric.price_date.isoformat()}\n"
+            f"Доходность за 1 год: {format_percent(metric.return_1y)}\n"
+            f"Доходность за 5 лет: {format_percent(metric.return_5y)}\n"
+            f"Дивидендная доходность: {format_percent(metric.div_yield)}\n"
+            f"Скор: {metric.score:.2f}\n"
+            f"Страница на MOEX: {issue_link}"
         )
         await safe_answer(message, text)
     except SQLAlchemyError:
-        await safe_answer(message, "Database error occurred while loading ETF info. Please try again later.")
+        await safe_answer(message, "Ошибка базы данных при загрузке информации о фонде. Попробуйте позже.")
 
 
 
@@ -139,22 +140,22 @@ async def handle_update(message: Message) -> None:
     try:
         async with SessionFactory() as session:
             if not await is_user_allowed(session, formatted_username):
-                await safe_answer(message, "Access denied. You are not allowed to run /update.")
+                await safe_answer(message, "Доступ запрещен. У вас нет прав для /update.")
                 return
 
-        await safe_answer(message, "Data refresh started. This may take a while.")
+        await safe_answer(message, "Обновление данных запущено. Это может занять некоторое время.")
 
         async with SessionFactory() as session:
             total_etfs, updated_metrics = await refresh_etf_cache(session)
 
         await safe_answer(
             message,
-            f"Update completed. ETFs fetched: {total_etfs}. Metrics updated: {updated_metrics}.",
+            f"Обновление завершено. Загружено фондов: {total_etfs}. Обновлено метрик: {updated_metrics}.",
         )
     except (aiohttp.ClientError, asyncio.TimeoutError):
-        await safe_answer(message, "MOEX API is temporarily unavailable. Please try /update again later.")
+        await safe_answer(message, "MOEX API временно недоступен. Попробуйте /update позже.")
     except SQLAlchemyError:
-        await safe_answer(message, "Database error occurred during update. Please try again later.")
+        await safe_answer(message, "Ошибка базы данных во время обновления. Попробуйте позже.")
 
 
 
