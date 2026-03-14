@@ -136,7 +136,7 @@ async def refresh_etf_cache(session: AsyncSession) -> tuple[int, int]:
             for etf in etf_list:
                 await _upsert_etf(session, etf)
 
-                price_date, current_price = await api_client.fetch_current_price(etf.secid)
+                price_date, current_price = await api_client.fetch_current_price(etf.secid, etf.board)
                 if current_price is None or current_price <= 0:
                     if etf.prevprice is None or etf.prevprice <= 0:
                         continue
@@ -145,8 +145,8 @@ async def refresh_etf_cache(session: AsyncSession) -> tuple[int, int]:
 
                 await _upsert_price(session, etf.secid, price_date, current_price)
 
-                close_1y_data = await api_client.fetch_close_near_date(etf.secid, one_year_date)
-                close_5y_data = await api_client.fetch_close_near_date(etf.secid, five_year_date)
+                close_1y_data = await api_client.fetch_close_near_date(etf.secid, etf.board, one_year_date)
+                close_5y_data = await api_client.fetch_close_near_date(etf.secid, etf.board, five_year_date)
 
                 historical_1y = close_1y_data[1] if close_1y_data else None
                 historical_5y = close_5y_data[1] if close_5y_data else None

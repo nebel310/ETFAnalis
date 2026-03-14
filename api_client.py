@@ -11,6 +11,7 @@ import aiohttp
 BASE_URL = "https://iss.moex.com/iss"
 MAX_RETRIES = 3
 REQUEST_TIMEOUT_SECONDS = 15
+ETF_BOARDS = ("TQTF", "TQIF", "TQBR")
 
 
 
@@ -24,6 +25,7 @@ class EtfStaticData:
     currency: str | None
     lotsize: int | None
     prevprice: float | None
+    board: str
 
 
 
@@ -95,29 +97,66 @@ class MoexApiClient:
         return rows
 
 
-    async def fetch_etf_list(self) -> list[EtfStaticData]:
-        """Fetch and filter ETF securities from MOEX shares board."""
-        payload = await self._request_json("/engines/stock/markets/shares/boards/TQBR/securities.json")
+    @staticmethod
+    def _to_int(value: Any) -> int | None:
+        """Convert generic input value into integer when possible."""
+        if value is None:
+            return None
+
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return None
+
+
+    @staticmethod
+    def _to_float(value: Any) -> float | None:
+        """Convert generic input value into float when possible."""
+        if value is None:
+            return None
+
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return None
+
+
+    @staticmethod
+    def _row_looks_like_etf(row: dict[str, Any]) -> bool:
+        """Determine whether MOEX security row represents an ETF instrument."""
+        keywords = (
+            str(row.get("SECTYPE") or "").upper(),
+            str(row.get("INSTRID") or "").upper(),
+            str(row.get("GROUP") or "").upper(),
+            str(row.get("SECNAME") or "").upper(),
+            str(row.get("SHORTNAME") or "").upper(),
+        )
+
+        if any(value == "ETF" for value in keywords[:2]):
+            return True
+
+        text_blob = " ".join(keywords)
+        return "ETF" in text_blob or "БПИФ" in text_blob
+
+
+    async def _fetch_board_etfs(self, board: str) -> list[EtfStaticData]:
+        """Fetch and map ETF-like rows from a specific board endpoint."""
+        payload = await self._request_json(f"/engines/stock/markets/shares/boards/{board}/securities.json")
         rows = self._rows_from_block(payload, "securities")
 
-        etfs: list[EtfStaticData] = []
+        mapped: list[EtfStaticData] = []
         for row in rows:
-            sectype = str(row.get("SECTYPE") or "").upper()
-            instrid = str(row.get("INSTRID") or "").upper()
-            if sectype != "ETF" and instrid != "ETF":
-                continue
-
             secid = str(row.get("SECID") or "").strip().upper()
             if not secid:
                 continue
 
-            lotsize_raw = row.get("LOTSIZE")
-            prevprice_raw = row.get("PREVPRICE")
+            if board == "TQBR" and not self._row_looks_like_etf(row):
+                continue
 
-            lotsize_value = int(lotsize_raw) if lotsize_raw is not None else None
-            prevprice_value = float(prevprice_raw) if prevprice_raw is not None else None
+            lotsize_value = self._to_int(row.get("LOTSIZE"))
+            prevprice_value = self._to_float(row.get("PREVPRICE"))
 
-            etfs.append(
+            mapped.append(
                 EtfStaticData(
                     secid=secid,
                     shortname=row.get("SHORTNAME"),
@@ -125,15 +164,30 @@ class MoexApiClient:
                     currency=row.get("CURRENCYID"),
                     lotsize=lotsize_value,
                     prevprice=prevprice_value,
+                    board=board,
                 )
             )
 
-        return etfs
+        return mapped
 
 
-    async def fetch_current_price(self, secid: str) -> tuple[date, float | None]:
+    async def fetch_etf_list(self) -> list[EtfStaticData]:
+        """Fetch and filter ETF securities using multiple MOEX board fallbacks."""
+        unique_by_secid: dict[str, EtfStaticData] = {}
+
+        for board in ETF_BOARDS:
+            board_rows = await self._fetch_board_etfs(board)
+            for etf in board_rows:
+                if etf.secid in unique_by_secid:
+                    continue
+                unique_by_secid[etf.secid] = etf
+
+        return list(unique_by_secid.values())
+
+
+    async def fetch_current_price(self, secid: str, board: str) -> tuple[date, float | None]:
         """Fetch latest tradable price for a security with fallback chain."""
-        payload = await self._request_json(f"/engines/stock/markets/shares/boards/TQBR/securities/{secid}.json")
+        payload = await self._request_json(f"/engines/stock/markets/shares/boards/{board}/securities/{secid}.json")
 
         market_rows = self._rows_from_block(payload, "marketdata")
         securities_rows = self._rows_from_block(payload, "securities")
@@ -149,14 +203,11 @@ class MoexApiClient:
 
         price_value: float | None = None
         for candidate in price_candidates:
-            if candidate is None:
+            parsed_candidate = self._to_float(candidate)
+            if parsed_candidate is None or parsed_candidate <= 0:
                 continue
-            try:
-                price_value = float(candidate)
-                if price_value > 0:
-                    break
-            except (TypeError, ValueError):
-                continue
+            price_value = parsed_candidate
+            break
 
         trade_date_raw = market_row.get("SYSTIME") or market_row.get("TRADEDATE")
         if isinstance(trade_date_raw, str) and trade_date_raw:
@@ -168,14 +219,14 @@ class MoexApiClient:
         return price_date, price_value
 
 
-    async def fetch_close_near_date(self, secid: str, target_date: date, fallback_days: int = 10) -> tuple[date, float] | None:
+    async def fetch_close_near_date(self, secid: str, board: str, target_date: date, fallback_days: int = 10) -> tuple[date, float] | None:
         """Fetch close price on target date or nearest previous day within fallback window."""
         for shift in range(0, fallback_days + 1):
             candidate_date = target_date - timedelta(days=shift)
             next_day = candidate_date + timedelta(days=1)
 
             payload = await self._request_json(
-                f"/engines/stock/markets/shares/boards/TQBR/securities/{secid}/candles.json",
+                f"/engines/stock/markets/shares/boards/{board}/securities/{secid}/candles.json",
                 params={
                     "from": candidate_date.isoformat(),
                     "till": next_day.isoformat(),
@@ -190,14 +241,16 @@ class MoexApiClient:
                 if close_value is None or begin_raw is None:
                     continue
 
-                try:
-                    close = float(close_value)
-                    if close <= 0:
-                        continue
-                    candle_date = date.fromisoformat(str(begin_raw).split(" ")[0])
-                    return candle_date, close
-                except (TypeError, ValueError):
+                close = self._to_float(close_value)
+                if close is None or close <= 0:
                     continue
+
+                try:
+                    candle_date = date.fromisoformat(str(begin_raw).split(" ")[0])
+                except ValueError:
+                    continue
+
+                return candle_date, close
 
         return None
 
@@ -216,8 +269,11 @@ class MoexApiClient:
 
             try:
                 payout_date = date.fromisoformat(str(date_raw).split(" ")[0])
-                payout_value = float(dividend_raw)
-            except (TypeError, ValueError):
+            except ValueError:
+                continue
+
+            payout_value = self._to_float(dividend_raw)
+            if payout_value is None:
                 continue
 
             if payout_date >= since_date and payout_value > 0:
