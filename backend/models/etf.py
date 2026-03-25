@@ -1,5 +1,5 @@
-from datetime import date
-from datetime import datetime
+from datetime import date as date_type
+from datetime import datetime as datetime_type
 
 from sqlalchemy import Date
 from sqlalchemy import DateTime
@@ -28,7 +28,7 @@ class EtfModel(Model):
     currency: Mapped[str | None] = mapped_column(String(16), nullable=True)
     lotsize: Mapped[int | None] = mapped_column(Integer, nullable=True)
     prevprice: Mapped[float | None] = mapped_column(Float, nullable=True)
-    updated_at: Mapped[datetime] = mapped_column(
+    updated_at: Mapped[datetime_type] = mapped_column(
         DateTime(timezone=True),
         server_default=func.now(),
         onupdate=func.now(),
@@ -50,7 +50,7 @@ class PriceModel(Model):
         ForeignKey("etfs.secid", ondelete="CASCADE"),
         nullable=False,
     )
-    date: Mapped[date] = mapped_column(Date, nullable=False)
+    date: Mapped[date_type] = mapped_column(Date, nullable=False)
     close: Mapped[float] = mapped_column(Float, nullable=False)
 
 
@@ -68,7 +68,7 @@ class DividendModel(Model):
         ForeignKey("etfs.secid", ondelete="CASCADE"),
         nullable=False,
     )
-    date: Mapped[date] = mapped_column(Date, nullable=False)
+    date: Mapped[date_type] = mapped_column(Date, nullable=False)
     value: Mapped[float] = mapped_column(Float, nullable=False)
 
 
@@ -84,13 +84,13 @@ class EtfMetricModel(Model):
         ForeignKey("etfs.secid", ondelete="CASCADE"),
         primary_key=True,
     )
-    price_date: Mapped[date] = mapped_column(Date, nullable=False)
+    price_date: Mapped[date_type] = mapped_column(Date, nullable=False)
     price: Mapped[float] = mapped_column(Float, nullable=False)
     return_1y: Mapped[float] = mapped_column(Float, nullable=False)
     return_5y: Mapped[float] = mapped_column(Float, nullable=False)
     div_yield: Mapped[float] = mapped_column(Float, nullable=False)
     score: Mapped[float] = mapped_column(Float, nullable=False)
-    calculated_at: Mapped[datetime] = mapped_column(
+    calculated_at: Mapped[datetime_type] = mapped_column(
         DateTime(timezone=True),
         server_default=func.now(),
         onupdate=func.now(),
